@@ -1,0 +1,15 @@
+services:
+  compressor:
+    build: .
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    environment:
+      PHP_MEMORY_LIMIT: "${PHP_MEMORY_LIMIT:-512M}"
+    volumes:
+      - type: bind
+        source: ./input
+        target: /app/input
+        read_only: true
+      - type: bind
+        source: ./output
+        target: /app/output
+    restart: "no"
