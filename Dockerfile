@@ -9,6 +9,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY docker/php.ini /usr/local/etc/php/conf.d/photos.ini
 COPY run.php ./
+COPY scripts ./scripts
 COPY tests ./tests
 RUN mkdir input output && chown -R 1000:1000 /app
 

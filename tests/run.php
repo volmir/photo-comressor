@@ -68,7 +68,10 @@ $input = $root . '/input';
 $output = $root . '/output';
 
 try {
-    createTestPhotos($input);
+    foreach (['landscape.jpg', 'portrait-exif.jpg'] as $file) {
+        check(is_file(__DIR__ . '/fixtures/' . $file), "Fixture exists: $file");
+        copy(__DIR__ . '/fixtures/' . $file, "$input/$file");
+    }
     $originalHash = hash_file('sha256', "$input/landscape.jpg");
     [$code, $log, $error] = batch($input, $output);
     check($code === 0 && $error === '', "Batch succeeds: $log $error");
