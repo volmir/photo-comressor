@@ -1,4 +1,5 @@
-FROM php:8.4-cli-bookworm
+# Pinned by digest for reproducible builds; update deliberately.
+FROM php:8.4-cli-bookworm@sha256:b3e907a1108629c562c4bb313ce3449e34d49991f6bb2487913f6146f47200fe
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libjpeg62-turbo-dev libpng-dev \
