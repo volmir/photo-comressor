@@ -19,16 +19,27 @@ function batch(string $input, string $output, array $arguments = [], array $phpA
 {
     $command = array_merge([PHP_BINARY], $phpArguments,
         [__DIR__ . '/../run.php', '--input', $input, '--output', $output], $arguments);
-    $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    $stdoutStream = tmpfile();
+    $stderrStream = tmpfile();
+    if ($stdoutStream === false || $stderrStream === false) {
+        throw new RuntimeException('Cannot create temporary streams');
+    }
+    $process = proc_open($command,
+        [0 => ['pipe', 'r'], 1 => $stdoutStream, 2 => $stderrStream], $pipes);
     if (!is_resource($process)) {
+        fclose($stdoutStream);
+        fclose($stderrStream);
         throw new RuntimeException('Cannot start CLI');
     }
     fclose($pipes[0]);
-    $stdout = stream_get_contents($pipes[1]);
-    $stderr = stream_get_contents($pipes[2]);
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-    return [proc_close($process), $stdout, $stderr];
+    $code = proc_close($process);
+    rewind($stdoutStream);
+    rewind($stderrStream);
+    $stdout = stream_get_contents($stdoutStream) ?: '';
+    $stderr = stream_get_contents($stderrStream) ?: '';
+    fclose($stdoutStream);
+    fclose($stderrStream);
+    return [$code, $stdout, $stderr];
 }
 
 function dimensions(string $file): array
@@ -106,6 +117,69 @@ try {
     [$code] = batch("$root/small", "$root/square", ['--width=50', '--height=30']);
     check($code === 0 && dimensions("$root/square/2023/2023-02-10/square.jpeg") === [50, 50],
         'Square uses width on both axes, as in original script');
+
+    mkdir("$root/names");
+    $names = ['photo with spaces.jpg', 'фото ёж.jpg'];
+    foreach ($names as $name) {
+        smallPhoto("$root/names/$name");
+        touch("$root/names/$name", strtotime('2023-03-05 00:00:00'));
+    }
+    [$code, $log, $error] = batch("$root/names", "$root/names-output");
+    check($code === 0, "Filenames with spaces and Unicode succeed: $error");
+    foreach ($names as $name) {
+        $path = "$root/names-output/2023/2023-03-05/$name";
+        check(is_file($path) && dimensions($path) === [80, 40], "Filename preserved: $name");
+    }
+
+    mkdir("$root/symlink-input");
+    smallPhoto("$root/symlink-target.jpg");
+    touch("$root/symlink-target.jpg", strtotime('2023-03-06 00:00:00'));
+    symlink("$root/symlink-target.jpg", "$root/symlink-input/linked.jpg");
+    [$code, $log, $error] = batch("$root/symlink-input", "$root/symlink-output");
+    check($code === 0 && is_file("$root/symlink-output/2023/2023-03-06/linked.jpg"),
+        "Input symlink is processed: $error");
+
+    mkdir("$root/dangling-input");
+    smallPhoto("$root/dangling-input/dangling.jpg");
+    touch("$root/dangling-input/dangling.jpg", strtotime('2023-03-07 00:00:00'));
+    mkdir("$root/dangling-output/2023/2023-03-07", 0775, true);
+    $danglingOutput = "$root/dangling-output/2023/2023-03-07/dangling.jpg";
+    symlink("$root/missing-target.jpg", $danglingOutput);
+    [$code, $log] = batch("$root/dangling-input", "$root/dangling-output");
+    check($code === 0 && str_contains($log, 'Skipped (exists)') && is_link($danglingOutput),
+        'Dangling output symlink is skipped without --overwrite');
+    [$code, $log] = batch("$root/dangling-input", "$root/dangling-output", ['--overwrite']);
+    check($code === 0 && is_file($danglingOutput) && !is_link($danglingOutput),
+        'Overwrite replaces a dangling output symlink');
+
+    mkdir("$root/link-input");
+    smallPhoto("$root/link-input/link.jpg");
+    touch("$root/link-input/link.jpg", strtotime('2023-03-08 00:00:00'));
+    mkdir("$root/link-output/2023/2023-03-08", 0775, true);
+    $linkTarget = "$root/link-target.txt";
+    file_put_contents($linkTarget, 'untouched');
+    $linkOutput = "$root/link-output/2023/2023-03-08/link.jpg";
+    symlink($linkTarget, $linkOutput);
+    [$code, $log] = batch("$root/link-input", "$root/link-output", ['--overwrite']);
+    check($code === 0 && file_get_contents($linkTarget) === 'untouched',
+        'Overwrite does not write through an output symlink');
+    check(is_file($linkOutput) && !is_link($linkOutput),
+        'Overwrite replaces an output symlink with a regular file');
+
+    mkdir("$root/temp-input");
+    smallPhoto("$root/temp-input/temp.jpg");
+    touch("$root/temp-input/temp.jpg", strtotime('2023-03-09 00:00:00'));
+    mkdir("$root/temp-output/2023/2023-03-09", 0775, true);
+    chmod("$root/temp-output/2023/2023-03-09", 0555);
+    [$code, $log, $error] = batch("$root/temp-input", "$root/temp-output");
+    check($code === 1 && str_contains($error, 'Cannot create temporary output file'),
+        'Unwritable date directory reports the temporary file location');
+    chmod("$root/temp-output/2023/2023-03-09", 0755);
+
+    $helpOutput = "$root/help-output";
+    [$code, $log, $error] = batch($input, $helpOutput, ['--help']);
+    check($code === 0 && str_contains($log, 'Usage:') && $error === '', '--help prints usage and succeeds');
+    check(!is_dir($helpOutput), '--help does not create the output directory');
 
     // Expected source corner order after applying each EXIF orientation.
     $corners = [1 => [0, 1, 2, 3], 2 => [1, 0, 3, 2], 3 => [3, 2, 1, 0],

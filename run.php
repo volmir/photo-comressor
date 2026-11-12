@@ -18,10 +18,7 @@ function options(array $arguments): array
         [$name, $value] = array_pad(explode('=', $arguments[$i], 2), 2, null);
         $name = substr($name, 0, 2) === '--' ? substr($name, 2) : '';
         if ($name === 'help') {
-            echo "Usage: php run.php [--input DIR] [--output DIR] [--width 1920] [--height 1080]\n"
-                . "                   [--coefficient 1] [--quality 85] [--timezone UTC] [--overwrite]\n"
-                . "JPEG only; non-recursive. Existing files are skipped unless --overwrite is set.\n";
-            exit(0);
+            return ['help' => true];
         }
         if (!array_key_exists($name, $options)) {
             throw new InvalidArgumentException('Unknown argument: ' . $arguments[$i]);
@@ -58,6 +55,13 @@ function options(array $arguments): array
         throw new InvalidArgumentException('Unknown timezone: ' . $options['timezone']);
     }
     return $options;
+}
+
+function usage(): string
+{
+    return "Usage: php run.php [--input DIR] [--output DIR] [--width 1920] [--height 1080]\n"
+        . "                   [--coefficient 1] [--quality 85] [--timezone UTC] [--overwrite]\n"
+        . "JPEG only; non-recursive. Existing files are skipped unless --overwrite is set.\n";
 }
 
 function ensureDirectory(string $path): void
@@ -162,12 +166,15 @@ function processPhoto(string $inputPath, string $filename, array $options): arra
     // Small, correctly oriented JPEGs keep their original bytes and metadata.
     $copy = $ratio >= 1.0 && !in_array($exifOrientation, range(2, 8), true);
     ensureDirectory($targetDir);
-    $temporaryPath = @tempnam($targetDir, '.photo-');
-    if ($temporaryPath === false) {
-        throw new RuntimeException('Cannot create temporary output file');
+    $temporaryPath = $targetDir . '/.photo-' . bin2hex(random_bytes(8));
+    $temporaryHandle = @fopen($temporaryPath, 'x');
+    if ($temporaryHandle === false) {
+        throw new RuntimeException("Cannot create temporary output file in: $targetDir");
     }
+    fclose($temporaryHandle);
     try {
         if ($copy) {
+            unset($image);
             $saved = @copy($inputPath, $temporaryPath);
         } else {
             $newImage = imagecreatetruecolor($newWidth, $newHeight);
@@ -175,7 +182,9 @@ function processPhoto(string $inputPath, string $filename, array $options): arra
                 $newWidth, $newHeight, $width, $height)) {
                 throw new RuntimeException('Cannot resize image');
             }
+            unset($image);
             $saved = @imagejpeg($newImage, $temporaryPath, $options['quality']);
+            unset($newImage);
         }
         if (!$saved || filesize($temporaryPath) === 0) {
             throw new RuntimeException('Cannot write JPEG (check disk space and permissions)');
@@ -203,6 +212,10 @@ function main(array $arguments): int
     } catch (InvalidArgumentException $exception) {
         fwrite(STDERR, 'Configuration error: ' . $exception->getMessage() . "\n");
         return 2;
+    }
+    if (!empty($options['help'])) {
+        echo usage();
+        return 0;
     }
     date_default_timezone_set($options['timezone']);
     foreach (['gd', 'exif'] as $extension) {
